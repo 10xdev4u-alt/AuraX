@@ -1,0 +1,66 @@
+syntax = "proto3";
+
+package aura.provisioning.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/10xdev4u-alt/aura/gen/go/provisioning/v1;provisioningv1";
+
+// ProvisioningService is the primary public-facing service for device onboarding.
+// It handles the initial bootstrap, claim, and certificate issuance process.
+service ProvisioningService {
+  // Bootstrap handles the initial handshake from a device in bootstrap mode.
+  // The device sends a temporary bootstrap token, and the server returns a
+  // unique challenge to be signed. This is a critical first step to verify
+  // the device's authenticity before provisioning.
+  rpc Bootstrap(BootstrapRequest) returns (BootstrapResponse);
+
+  // Provision validates the signed challenge and, if successful, provisions the
+  // device. It returns the permanent client certificate, private key, and
+  // connection details for the MQTT broker. This is the final step in the
+  // onboarding process.
+  rpc Provision(ProvisionRequest) returns (ProvisionResponse);
+}
+
+// BootstrapRequest contains the single-use token identifying a factory-new device.
+message BootstrapRequest {
+  // A single-use token hard-coded at the factory. This token is used to
+  // initiate the provisioning process and is invalidated after first use.
+  string bootstrap_token = 1;
+}
+
+// BootstrapResponse contains the challenge that the device must sign.
+message BootstrapResponse {
+  // A unique, server-generated challenge (e.g., a JWT or random string)
+  // that the device must sign with its factory private key to prove possession.
+  string challenge = 1;
+  // The timestamp at which this challenge expires to prevent replay attacks.
+  google.protobuf.Timestamp expires_at = 2;
+}
+
+// ProvisionRequest contains the signed challenge from the device.
+message ProvisionRequest {
+  // The original challenge received from the BootstrapResponse.
+  string challenge = 1;
+  // The challenge, signed by the device's unique private key. The signature
+  // is proof that the device is authentic.
+  bytes signed_challenge = 2;
+}
+
+// ProvisionResponse contains all the credentials and information the device
+// needs to connect to the Aura platform.
+message ProvisionResponse {
+  // The unique ID for this device in the Aura system.
+  string device_id = 1;
+  // The PEM-encoded client certificate for this device. This certificate
+  // will be used for all future secure communications.
+  string client_certificate = 2;
+  // The PEM-encoded private key for this device.
+  string client_key = 3;
+  // The PEM-encoded CA certificate to validate the server and broker.
+  string ca_certificate = 4;
+  // The hostname of the MQTT broker to connect to.
+  string mqtt_host = 5;
+  // The port of the MQTT broker.
+  int32 mqtt_port = 6;
+}

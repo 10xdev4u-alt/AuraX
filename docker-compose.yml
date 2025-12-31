@@ -93,7 +93,7 @@ services:
       dockerfile: Dockerfile
     container_name: aura-dashboard
     ports:
-      - "3000:80"
+      - "3001:80"
     depends_on:
       - apiserver
     restart: unless-stopped

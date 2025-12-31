@@ -103,6 +103,7 @@ cd aura
 ```
 
 Services will be available at:
+- **Web Dashboard**: `localhost:3001`
 - **Provisioning Server (gRPC)**: `localhost:50051`
 - **API Server (REST)**: `localhost:8080`
 - **PostgreSQL**: `localhost:5432`

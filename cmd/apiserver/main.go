@@ -8,6 +8,7 @@ import (
 	"github.com/10xdev4u-alt/aura/pkg/api/middleware"
 	"github.com/10xdev4u-alt/aura/pkg/config"
 	"github.com/10xdev4u-alt/aura/pkg/database"
+	"github.com/10xdev4u-alt/aura/pkg/storage"
 	"github.com/gin-gonic/gin"
 )
 
@@ -43,6 +44,15 @@ func main() {
 		log.Fatalf("Failed to initialize database schema: %v", err)
 	}
 
+	storagePath := os.Getenv("STORAGE_PATH")
+	if storagePath == "" {
+		storagePath = "./data/firmware"
+	}
+	localStorage, err := storage.NewLocalStorage(storagePath)
+	if err != nil {
+		log.Fatalf("Failed to initialize storage: %v", err)
+	}
+
 	router := gin.Default()
 
 	router.Use(middleware.Logger())
@@ -53,6 +63,9 @@ func main() {
 	router.GET("/ready", healthHandler.Ready)
 
 	deviceHandler := handlers.NewDeviceHandler(db)
+	firmwareHandler := handlers.NewFirmwareHandler(db, localStorage)
+	releaseHandler := handlers.NewReleaseHandler(db)
+
 	v1 := router.Group("/api/v1")
 	{
 		devices := v1.Group("/devices")
@@ -60,6 +73,21 @@ func main() {
 			devices.GET("", deviceHandler.ListDevices)
 			devices.GET("/:id", deviceHandler.GetDevice)
 			devices.POST("", deviceHandler.CreateDevice)
+		}
+
+		firmware := v1.Group("/firmware")
+		{
+			firmware.GET("", firmwareHandler.ListFirmware)
+			firmware.GET("/:id", firmwareHandler.GetFirmware)
+			firmware.POST("", firmwareHandler.UploadFirmware)
+		}
+
+		releases := v1.Group("/releases")
+		{
+			releases.GET("", releaseHandler.ListReleases)
+			releases.GET("/:id", releaseHandler.GetRelease)
+			releases.POST("", releaseHandler.CreateRelease)
+			releases.PUT("/:id/status", releaseHandler.UpdateReleaseStatus)
 		}
 	}
 

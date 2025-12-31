@@ -63,6 +63,31 @@ func (db *DB) InitSchema() error {
 		created_at TIMESTAMPTZ DEFAULT NOW(),
 		updated_at TIMESTAMPTZ DEFAULT NOW()
 	);
+
+	CREATE TABLE IF NOT EXISTS firmware (
+		id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		version TEXT UNIQUE NOT NULL,
+		description TEXT,
+		file_path TEXT NOT NULL,
+		file_size BIGINT NOT NULL,
+		checksum TEXT NOT NULL,
+		created_at TIMESTAMPTZ DEFAULT NOW(),
+		updated_at TIMESTAMPTZ DEFAULT NOW()
+	);
+
+	CREATE TABLE IF NOT EXISTS releases (
+		id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		firmware_id UUID NOT NULL REFERENCES firmware(id),
+		status TEXT NOT NULL DEFAULT 'pending',
+		stage TEXT NOT NULL DEFAULT 'canary',
+		target_fleet TEXT,
+		health_policy TEXT,
+		created_at TIMESTAMPTZ DEFAULT NOW(),
+		updated_at TIMESTAMPTZ DEFAULT NOW()
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_releases_firmware ON releases(firmware_id);
+	CREATE INDEX IF NOT EXISTS idx_releases_status ON releases(status);
 	`
 
 	_, err := db.Exec(schema)

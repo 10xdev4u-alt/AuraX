@@ -77,3 +77,61 @@ func (db *DB) InitSchema() error {
 func (db *DB) Close() error {
 	return db.DB.Close()
 }
+
+func (db *DB) BootstrapTokenExists(token string) (bool, error) {
+	var exists bool
+	query := `SELECT EXISTS(SELECT 1 FROM devices WHERE bootstrap_token = $1 AND provisioned_at IS NULL)`
+	err := db.QueryRow(query, token).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("failed to check token: %w", err)
+	}
+	return exists, nil
+}
+
+func (db *DB) CreateDevice() (string, error) {
+	var deviceID string
+	query := `INSERT INTO devices (bootstrap_token) VALUES (NULL) RETURNING id`
+	err := db.QueryRow(query).Scan(&deviceID)
+	if err != nil {
+		return "", fmt.Errorf("failed to create device: %w", err)
+	}
+	return deviceID, nil
+}
+
+func (db *DB) MarkDeviceProvisioned(deviceID string) error {
+	query := `UPDATE devices SET provisioned_at = NOW(), updated_at = NOW() WHERE id = $1`
+	_, err := db.Exec(query, deviceID)
+	if err != nil {
+		return fmt.Errorf("failed to mark device provisioned: %w", err)
+	}
+	return nil
+}
+
+func (db *DB) GetDeviceByID(deviceID string) (*Device, error) {
+	var device Device
+	query := `SELECT id, bootstrap_token, claimed_by_user_id, claimed_at, provisioned_at, 
+	          certificate_serial, created_at, updated_at FROM devices WHERE id = $1`
+	err := db.QueryRow(query, deviceID).Scan(
+		&device.ID, &device.BootstrapToken, &device.ClaimedByUserID,
+		&device.ClaimedAt, &device.ProvisionedAt, &device.CertificateSerial,
+		&device.CreatedAt, &device.UpdatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("device not found")
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get device: %w", err)
+	}
+	return &device, nil
+}
+
+type Device struct {
+	ID                string
+	BootstrapToken    *string
+	ClaimedByUserID   *string
+	ClaimedAt         *string
+	ProvisionedAt     *string
+	CertificateSerial *string
+	CreatedAt         string
+	UpdatedAt         string
+}

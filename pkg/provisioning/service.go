@@ -4,10 +4,11 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
-	"fmt"
 	"time"
 
 	pb "github.com/10xdev4u-alt/aura/gen/go/provisioning/v1"
+	"github.com/10xdev4u-alt/aura/pkg/database"
+	"github.com/10xdev4u-alt/aura/pkg/pki"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -15,15 +16,30 @@ import (
 
 type ProvisioningService struct {
 	pb.UnimplementedProvisioningServiceServer
+	db         *database.DB
+	pkiService *pki.PKIService
+	challenges map[string]time.Time
 }
 
-func NewProvisioningService() *ProvisioningService {
-	return &ProvisioningService{}
+func NewProvisioningService(db *database.DB, pkiService *pki.PKIService) *ProvisioningService {
+	return &ProvisioningService{
+		db:         db,
+		pkiService: pkiService,
+		challenges: make(map[string]time.Time),
+	}
 }
 
 func (s *ProvisioningService) Bootstrap(ctx context.Context, req *pb.BootstrapRequest) (*pb.BootstrapResponse, error) {
 	if req.BootstrapToken == "" {
 		return nil, status.Error(codes.InvalidArgument, "bootstrap_token is required")
+	}
+
+	exists, err := s.db.BootstrapTokenExists(req.BootstrapToken)
+	if err != nil {
+		return nil, status.Error(codes.Internal, "failed to verify token")
+	}
+	if !exists {
+		return nil, status.Error(codes.NotFound, "invalid bootstrap token")
 	}
 
 	challenge, err := generateChallenge()
@@ -32,6 +48,7 @@ func (s *ProvisioningService) Bootstrap(ctx context.Context, req *pb.BootstrapRe
 	}
 
 	expiresAt := time.Now().Add(5 * time.Minute)
+	s.challenges[challenge] = expiresAt
 
 	return &pb.BootstrapResponse{
 		Challenge: challenge,
@@ -47,11 +64,33 @@ func (s *ProvisioningService) Provision(ctx context.Context, req *pb.ProvisionRe
 		return nil, status.Error(codes.InvalidArgument, "signed_challenge is required")
 	}
 
-	deviceID := generateDeviceID()
+	expiresAt, exists := s.challenges[req.Challenge]
+	if !exists {
+		return nil, status.Error(codes.InvalidArgument, "invalid challenge")
+	}
+	if time.Now().After(expiresAt) {
+		delete(s.challenges, req.Challenge)
+		return nil, status.Error(codes.DeadlineExceeded, "challenge expired")
+	}
 
-	clientCert := "-----BEGIN CERTIFICATE-----\nMIIC...(placeholder)\n-----END CERTIFICATE-----"
-	clientKey := "-----BEGIN PRIVATE KEY-----\nMIIE...(placeholder)\n-----END PRIVATE KEY-----"
-	caCert := "-----BEGIN CERTIFICATE-----\nMIIC...(placeholder CA)\n-----END CERTIFICATE-----"
+	delete(s.challenges, req.Challenge)
+
+	deviceID, err := s.db.CreateDevice()
+	if err != nil {
+		return nil, status.Error(codes.Internal, "failed to create device")
+	}
+
+	clientCert, clientKey, err := s.pkiService.IssueCertificate(deviceID)
+	if err != nil {
+		return nil, status.Error(codes.Internal, "failed to issue certificate")
+	}
+
+	err = s.db.MarkDeviceProvisioned(deviceID)
+	if err != nil {
+		return nil, status.Error(codes.Internal, "failed to update device status")
+	}
+
+	caCert := s.pkiService.GetCACertPEM()
 
 	return &pb.ProvisionResponse{
 		DeviceId:          deviceID,
@@ -70,8 +109,4 @@ func generateChallenge() (string, error) {
 		return "", err
 	}
 	return base64.URLEncoding.EncodeToString(b), nil
-}
-
-func generateDeviceID() string {
-	return fmt.Sprintf("device-%d", time.Now().Unix())
 }

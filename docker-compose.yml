@@ -87,6 +87,17 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  dashboard:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    container_name: aura-dashboard
+    ports:
+      - "3000:80"
+    depends_on:
+      - apiserver
+    restart: unless-stopped
+
 volumes:
   postgres_data:
   mosquitto_data:

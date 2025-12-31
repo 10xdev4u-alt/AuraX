@@ -5,10 +5,12 @@ import (
 	"time"
 
 	"github.com/10xdev4u-alt/aura/pkg/database"
+	"github.com/10xdev4u-alt/aura/pkg/mqtt"
 )
 
 type Orchestrator struct {
 	db            *database.DB
+	mqttClient    *mqtt.Client
 	pollInterval  time.Duration
 	stopChan      chan struct{}
 	healthMetrics map[string]*ReleaseHealth
@@ -23,9 +25,10 @@ type ReleaseHealth struct {
 	LastUpdateTime time.Time
 }
 
-func NewOrchestrator(db *database.DB) *Orchestrator {
+func NewOrchestrator(db *database.DB, mqttClient *mqtt.Client) *Orchestrator {
 	return &Orchestrator{
 		db:            db,
+		mqttClient:    mqttClient,
 		pollInterval:  30 * time.Second,
 		stopChan:      make(chan struct{}),
 		healthMetrics: make(map[string]*ReleaseHealth),
@@ -34,6 +37,10 @@ func NewOrchestrator(db *database.DB) *Orchestrator {
 
 func (o *Orchestrator) Start() {
 	log.Println("OTA Orchestrator started")
+
+	o.mqttClient.SubscribeToTelemetry(o.handleTelemetry)
+	o.mqttClient.SubscribeToUpdateStatus(o.handleUpdateStatus)
+
 	ticker := time.NewTicker(o.pollInterval)
 	defer ticker.Stop()
 
@@ -45,6 +52,22 @@ func (o *Orchestrator) Start() {
 			log.Println("OTA Orchestrator stopped")
 			return
 		}
+	}
+}
+
+func (o *Orchestrator) handleTelemetry(telemetry *mqtt.DeviceTelemetry) {
+	log.Printf("Received telemetry from device %s: status=%s, version=%s",
+		telemetry.DeviceID, telemetry.Status, telemetry.FirmwareVersion)
+}
+
+func (o *Orchestrator) handleUpdateStatus(status *mqtt.UpdateStatus) {
+	log.Printf("Update status from device %s: %s (progress: %d%%)",
+		status.DeviceID, status.Status, status.Progress)
+
+	if status.Status == "completed" {
+		log.Printf("Device %s successfully updated", status.DeviceID)
+	} else if status.Status == "failed" {
+		log.Printf("Device %s update failed: %s", status.DeviceID, status.Error)
 	}
 }
 
@@ -83,7 +106,43 @@ func (o *Orchestrator) startRelease(releaseID string) {
 		LastUpdateTime: time.Now(),
 	}
 
-	log.Printf("Release %s moved to canary stage", releaseID)
+	release, err := o.db.GetReleaseByID(releaseID)
+	if err != nil {
+		log.Printf("Error getting release %s: %v", releaseID, err)
+		return
+	}
+
+	firmware, err := o.db.GetFirmwareByID(release.FirmwareID)
+	if err != nil {
+		log.Printf("Error getting firmware for release %s: %v", releaseID, err)
+		return
+	}
+
+	devices, err := o.db.ListDevices()
+	if err != nil {
+		log.Printf("Error getting devices for release %s: %v", releaseID, err)
+		return
+	}
+
+	canaryCount := 5
+	if len(devices) < canaryCount {
+		canaryCount = len(devices)
+	}
+
+	for i := 0; i < canaryCount; i++ {
+		device := devices[i]
+		cmd := &mqtt.UpdateCommand{
+			DeviceID:    device.ID,
+			FirmwareURL: "https://firmware.aura.example.com/" + firmware.ID,
+			Version:     firmware.Version,
+			Checksum:    firmware.Checksum,
+		}
+		if err := o.mqttClient.PublishUpdateCommand(device.ID, cmd); err != nil {
+			log.Printf("Error sending update command to device %s: %v", device.ID, err)
+		}
+	}
+
+	log.Printf("Release %s moved to canary stage, sent to %d devices", releaseID, canaryCount)
 }
 
 func (o *Orchestrator) monitorRelease(releaseID string) {
@@ -140,8 +199,20 @@ func (o *Orchestrator) rollbackRelease(releaseID string) {
 		return
 	}
 
+	devices, err := o.db.ListDevices()
+	if err != nil {
+		log.Printf("Error getting devices for rollback: %v", err)
+		return
+	}
+
+	for _, device := range devices {
+		if err := o.mqttClient.PublishRollbackCommand(device.ID); err != nil {
+			log.Printf("Error sending rollback command to device %s: %v", device.ID, err)
+		}
+	}
+
 	delete(o.healthMetrics, releaseID)
-	log.Printf("Release %s rolled back", releaseID)
+	log.Printf("Release %s rolled back, rollback commands sent to all devices", releaseID)
 }
 
 func (o *Orchestrator) completeRelease(releaseID string) {

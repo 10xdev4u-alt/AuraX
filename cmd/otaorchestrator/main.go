@@ -8,6 +8,7 @@ import (
 
 	"github.com/10xdev4u-alt/aura/pkg/config"
 	"github.com/10xdev4u-alt/aura/pkg/database"
+	"github.com/10xdev4u-alt/aura/pkg/mqtt"
 	"github.com/10xdev4u-alt/aura/pkg/ota"
 )
 
@@ -39,7 +40,26 @@ func main() {
 	}
 	defer db.Close()
 
-	orchestrator := ota.NewOrchestrator(db)
+	mqttBroker := os.Getenv("MQTT_BROKER")
+	if mqttBroker == "" {
+		mqttBroker = "localhost"
+	}
+
+	mqttCfg := mqtt.Config{
+		Broker:   mqttBroker,
+		Port:     1883,
+		ClientID: "aura-ota-orchestrator",
+		Username: "",
+		Password: "",
+	}
+
+	mqttClient, err := mqtt.NewClient(mqttCfg)
+	if err != nil {
+		log.Fatalf("Failed to connect to MQTT broker: %v", err)
+	}
+	defer mqttClient.Disconnect()
+
+	orchestrator := ota.NewOrchestrator(db, mqttClient)
 
 	go orchestrator.Start()
 

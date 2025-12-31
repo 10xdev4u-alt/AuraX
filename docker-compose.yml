@@ -1,0 +1,94 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: aura-postgres
+    environment:
+      POSTGRES_USER: aura
+      POSTGRES_PASSWORD: aura
+      POSTGRES_DB: aura
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aura"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: aura-mosquitto
+    ports:
+      - "1883:1883"
+      - "9001:9001"
+    volumes:
+      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf
+      - mosquitto_data:/mosquitto/data
+      - mosquitto_logs:/mosquitto/log
+    healthcheck:
+      test: ["CMD-SHELL", "mosquitto_sub -t '$$SYS/#' -C 1 -i healthcheck -W 3"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  auraserver:
+    build:
+      context: .
+      dockerfile: Dockerfile.auraserver
+    container_name: aura-provisioning-server
+    ports:
+      - "50051:50051"
+    environment:
+      - GRPC_PORT=50051
+      - CONFIG_PATH=/app/config.yaml
+    volumes:
+      - ./config.yaml:/app/config.yaml
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  apiserver:
+    build:
+      context: .
+      dockerfile: Dockerfile.apiserver
+    container_name: aura-api-server
+    ports:
+      - "8080:8080"
+    environment:
+      - API_PORT=8080
+      - CONFIG_PATH=/app/config.yaml
+      - STORAGE_PATH=/app/data/firmware
+    volumes:
+      - ./config.yaml:/app/config.yaml
+      - firmware_data:/app/data/firmware
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  otaorchestrator:
+    build:
+      context: .
+      dockerfile: Dockerfile.otaorchestrator
+    container_name: aura-ota-orchestrator
+    environment:
+      - CONFIG_PATH=/app/config.yaml
+      - MQTT_BROKER=mosquitto
+    volumes:
+      - ./config.yaml:/app/config.yaml
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mosquitto:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  mosquitto_data:
+  mosquitto_logs:
+  firmware_data:

@@ -25,3 +25,12 @@ go.work.sum
 /build
 /dist
 /bin
+
+# Data directories
+/data
+
+# Docker volumes
+postgres_data/
+mosquitto_data/
+mosquitto_logs/
+firmware_data/

@@ -135,3 +135,43 @@ type Device struct {
 	CreatedAt         string
 	UpdatedAt         string
 }
+
+func (db *DB) ListDevices() ([]Device, error) {
+	query := `SELECT id, bootstrap_token, claimed_by_user_id, claimed_at, provisioned_at, 
+	          certificate_serial, created_at, updated_at FROM devices ORDER BY created_at DESC`
+	rows, err := db.Query(query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list devices: %w", err)
+	}
+	defer rows.Close()
+
+	var devices []Device
+	for rows.Next() {
+		var device Device
+		err := rows.Scan(
+			&device.ID, &device.BootstrapToken, &device.ClaimedByUserID,
+			&device.ClaimedAt, &device.ProvisionedAt, &device.CertificateSerial,
+			&device.CreatedAt, &device.UpdatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan device: %w", err)
+		}
+		devices = append(devices, device)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating devices: %w", err)
+	}
+
+	return devices, nil
+}
+
+func (db *DB) CreateDeviceWithToken(token string) (string, error) {
+	var deviceID string
+	query := `INSERT INTO devices (bootstrap_token) VALUES ($1) RETURNING id`
+	err := db.QueryRow(query, token).Scan(&deviceID)
+	if err != nil {
+		return "", fmt.Errorf("failed to create device with token: %w", err)
+	}
+	return deviceID, nil
+}
